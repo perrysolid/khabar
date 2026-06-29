@@ -1,7 +1,7 @@
 from collections import Counter
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,7 @@ def to_article_out(article: Article, score: float | None = None) -> ArticleOut:
 
 @router.get("/digest/today", response_model=DigestOut)
 def get_today_digest(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DigestOut:
@@ -50,15 +51,13 @@ def get_today_digest(
     )
 
     if not articles:
-        execute_pipeline()
-        db.expire_all()
+        background_tasks.add_task(execute_pipeline)
         articles = (
             db.execute(
                 select(Article)
                 .where(Article.published_at >= cutoff)
-                .where(Article.is_representative.is_(True))
-                .where(Article.shown_in_digest.is_(True))
-                .order_by(Article.score.desc())
+                .order_by(Article.published_at.desc())
+                .limit(settings.MAX_ARTICLES_PER_DIGEST * 3)
             )
             .scalars()
             .all()

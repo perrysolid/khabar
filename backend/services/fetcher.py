@@ -39,6 +39,7 @@ def parse_date(entry) -> datetime:
 
 def fetch_feeds(db: Session) -> list:
     new_ids = []
+    seen_urls = set(db.execute(select(Article.url)).scalars().all())
     for feed in RSS_FEEDS:
         parsed = feedparser.parse(feed["url"])
         if getattr(parsed, "bozo", False) and not parsed.entries:
@@ -51,8 +52,7 @@ def fetch_feeds(db: Session) -> list:
             if not url or not title:
                 continue
 
-            exists = db.execute(select(Article.id).where(Article.url == url)).scalar_one_or_none()
-            if exists:
+            if url in seen_urls:
                 continue
 
             summary = clean_text(entry.get("summary") or entry.get("description"))
@@ -69,6 +69,7 @@ def fetch_feeds(db: Session) -> list:
             )
             db.add(article)
             db.flush()
+            seen_urls.add(url)
             new_ids.append(article.id)
 
     db.commit()

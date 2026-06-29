@@ -1,4 +1,5 @@
 from datetime import datetime
+from threading import Lock
 
 from celery import Celery
 
@@ -22,6 +23,7 @@ celery_app.conf.beat_schedule = {
     },
 }
 celery_app.conf.timezone = "UTC"
+pipeline_lock = Lock()
 
 
 def log(message: str) -> None:
@@ -29,36 +31,47 @@ def log(message: str) -> None:
 
 
 def execute_pipeline() -> dict[str, int]:
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        log("Pipeline started.")
-        new_article_ids = fetch_feeds(db)
-        log(f"Fetched {len(new_article_ids)} new articles.")
-
-        embedded_count = embed_missing_articles(db)
-        log(f"Generated {embedded_count} embeddings.")
-
-        cluster_count = deduplicate_recent_articles(db)
-        log(f"Built {cluster_count} clusters.")
-
-        rewritten_count = rewrite_missing_articles(db)
-        log(f"Rewrote or filled {rewritten_count} representative articles.")
-
-        digest_articles = score_and_mark_digest(db)
-        log(
-            "Pipeline complete. "
-            f"{len(new_article_ids)} new articles. "
-            f"{cluster_count} clusters. "
-            f"{len(digest_articles)} shown in digest."
-        )
+    if not pipeline_lock.acquire(blocking=False):
+        log("Pipeline already running; skipping duplicate request.")
         return {
-            "new_articles": len(new_article_ids),
-            "clusters": cluster_count,
-            "shown_in_digest": len(digest_articles),
+            "new_articles": 0,
+            "clusters": 0,
+            "shown_in_digest": 0,
         }
+
+    try:
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            log("Pipeline started.")
+            new_article_ids = fetch_feeds(db)
+            log(f"Fetched {len(new_article_ids)} new articles.")
+
+            embedded_count = embed_missing_articles(db)
+            log(f"Generated {embedded_count} embeddings.")
+
+            cluster_count = deduplicate_recent_articles(db)
+            log(f"Built {cluster_count} clusters.")
+
+            rewritten_count = rewrite_missing_articles(db)
+            log(f"Rewrote or filled {rewritten_count} representative articles.")
+
+            digest_articles = score_and_mark_digest(db)
+            log(
+                "Pipeline complete. "
+                f"{len(new_article_ids)} new articles. "
+                f"{cluster_count} clusters. "
+                f"{len(digest_articles)} shown in digest."
+            )
+            return {
+                "new_articles": len(new_article_ids),
+                "clusters": cluster_count,
+                "shown_in_digest": len(digest_articles),
+            }
+        finally:
+            db.close()
     finally:
-        db.close()
+        pipeline_lock.release()
 
 
 @celery_app.task(name="tasks.pipeline.run_pipeline")
