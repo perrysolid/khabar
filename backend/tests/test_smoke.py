@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 os.environ["DATABASE_URL"] = "sqlite:///./smoke-test.db"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 os.environ["JWT_SECRET_KEY"] = "smoke-test-secret"
+os.environ["EMBEDDING_BACKEND"] = "simple"
 
 
 class FakeCelery:
