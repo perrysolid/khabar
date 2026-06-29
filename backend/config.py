@@ -42,6 +42,8 @@ class Settings:
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
     DEDUP_THRESHOLD: float = float(os.getenv("DEDUP_THRESHOLD", "0.82"))
     EMBEDDING_BACKEND: str = os.getenv("EMBEDDING_BACKEND", "simple")
+    DIGEST_CACHE_TTL_SECONDS: int = int(os.getenv("DIGEST_CACHE_TTL_SECONDS", "1800"))
+    PIPELINE_REFRESH_THROTTLE_SECONDS: int = int(os.getenv("PIPELINE_REFRESH_THROTTLE_SECONDS", "300"))
     MAX_ARTICLES_PER_DIGEST: int = int(os.getenv("MAX_ARTICLES_PER_DIGEST", "20"))
     MIN_ARTICLES_PER_DIGEST: int = int(os.getenv("MIN_ARTICLES_PER_DIGEST", "15"))
     MAX_ARTICLES_PER_TOPIC: int = int(os.getenv("MAX_ARTICLES_PER_TOPIC", "4"))

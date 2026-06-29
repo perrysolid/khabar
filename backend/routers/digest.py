@@ -1,7 +1,7 @@
 from collections import Counter
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,8 +10,9 @@ from config import get_settings
 from database import get_db
 from models import Article, TopicWeight, User
 from schemas import ArticleOut, DigestOut, StatusOut
+from services.digest_cache import get_cached_digest_articles, parse_cached_uuid, should_queue_pipeline_refresh
 from services.ranker import choose_diverse_articles, score_article
-from tasks.pipeline import execute_pipeline, run_pipeline
+from tasks.pipeline import run_pipeline
 
 
 router = APIRouter(prefix="/api", tags=["digest"])
@@ -30,14 +31,59 @@ def to_article_out(article: Article, score: float | None = None) -> ArticleOut:
     )
 
 
+def cached_article_score(article: dict, topic_weights: dict[str, float]) -> float:
+    published_at = datetime.fromisoformat(article["published_at"])
+    age_hours = max(0.0, (datetime.utcnow() - published_at).total_seconds() / 3600)
+    recency = max(0.0, 1 - (age_hours / 24))
+    topic_weight = topic_weights.get(article["topic"], 1.0)
+    return min(1.0, round((0.5 + 0.5 * recency) * topic_weight, 4))
+
+
+def cached_article_to_out(article: dict, score: float) -> ArticleOut:
+    return ArticleOut(
+        id=parse_cached_uuid(article["id"]),
+        title=article["title"],
+        summary=article["summary"],
+        url=article["url"],
+        source=article["source"],
+        topic=article["topic"],
+        reading_time_minutes=article["reading_time_minutes"],
+        score=score,
+    )
+
+
+def queue_pipeline_refresh() -> None:
+    try:
+        if should_queue_pipeline_refresh():
+            run_pipeline.delay()
+    except Exception as exc:
+        print(f"Could not queue pipeline refresh: {exc}")
+
+
 @router.get("/digest/today", response_model=DigestOut)
 def get_today_digest(
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DigestOut:
     settings = get_settings()
     cutoff = datetime.utcnow() - timedelta(hours=settings.FETCH_WINDOW_HOURS)
+    weights = {
+        row.topic: row.weight
+        for row in db.execute(select(TopicWeight).where(TopicWeight.user_id == current_user.id)).scalars().all()
+    }
+
+    cached_articles = get_cached_digest_articles()
+    if cached_articles:
+        queue_pipeline_refresh()
+        scored = [(article, cached_article_score(article, weights)) for article in cached_articles]
+        scored = sorted(scored, key=lambda item: item[1], reverse=True)[: settings.MAX_ARTICLES_PER_DIGEST]
+        breakdown = Counter(article["topic"] for article, _score in scored)
+        return DigestOut(
+            date=date.today(),
+            articles=[cached_article_to_out(article, score) for article, score in scored],
+            topic_breakdown=dict(breakdown),
+        )
+
     articles = (
         db.execute(
             select(Article)
@@ -51,7 +97,7 @@ def get_today_digest(
     )
 
     if not articles:
-        background_tasks.add_task(execute_pipeline)
+        queue_pipeline_refresh()
         articles = (
             db.execute(
                 select(Article)
@@ -62,11 +108,9 @@ def get_today_digest(
             .scalars()
             .all()
         )
+    else:
+        queue_pipeline_refresh()
 
-    weights = {
-        row.topic: row.weight
-        for row in db.execute(select(TopicWeight).where(TopicWeight.user_id == current_user.id)).scalars().all()
-    }
     personalized_scores = {article.id: score_article(article, weights) for article in articles}
     articles = sorted(articles, key=lambda article: personalized_scores[article.id], reverse=True)
 

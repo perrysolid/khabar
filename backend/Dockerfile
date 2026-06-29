@@ -15,4 +15,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "celery -A tasks.pipeline worker --beat --loglevel=info --concurrency=1 & uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

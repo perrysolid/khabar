@@ -6,6 +6,7 @@ from celery import Celery
 from config import get_settings
 from database import Base, SessionLocal, engine
 from services.deduplicator import deduplicate_recent_articles
+from services.digest_cache import cache_digest_articles
 from services.embedder import embed_missing_articles
 from services.fetcher import fetch_feeds
 from services.ranker import score_and_mark_digest
@@ -57,6 +58,7 @@ def execute_pipeline() -> dict[str, int]:
             log(f"Rewrote or filled {rewritten_count} representative articles.")
 
             digest_articles = score_and_mark_digest(db)
+            cache_digest_articles(digest_articles)
             log(
                 "Pipeline complete. "
                 f"{len(new_article_ids)} new articles. "
