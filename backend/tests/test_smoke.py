@@ -1,9 +1,12 @@
 import os
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ["DATABASE_URL"] = "sqlite:///./smoke-test.db"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
